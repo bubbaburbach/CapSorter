@@ -149,18 +149,18 @@ volatile uint8_t *g_pcicr;
 volatile int8_t g_switchState;
 volatile int8_t g_state;
 
-int8_t g_upperProxLastState;
-int8_t g_lowerProxLastState;
-int8_t g_upperProxState;
-int8_t g_lowerProxState;
-int8_t g_swManState;
-int8_t g_swManLastState;
-int8_t g_swAutoState;
-int8_t g_swAutoLastState;
+uint8_t g_upperProxLastState;
+uint8_t g_lowerProxLastState;
+uint8_t g_upperProxState;
+uint8_t g_lowerProxState;
+uint8_t g_swManState;
+uint8_t g_swManLastState;
+uint8_t g_swAutoState;
+uint8_t g_swAutoLastState;
 
 // Timestamp Array
-// [0:Upper Prox, 1:Lower Prox, 2: Selector Automatic, 3: Selector Manual, 4: Misc.]
-volatile uint32_t g_timeStamps[5];
+// [0:Upper Prox, 1:Lower Prox, 2: Selector Automatic, 3: Selector Manual, 4: UpperToggle, 5: LowerToggle]
+volatile uint32_t g_timeStamps[6];
 
 
 //////
@@ -168,6 +168,9 @@ volatile uint32_t g_timeStamps[5];
 //////
 int8_t checkSwitch();
 int8_t handleAuto();
+
+
+
 
 //////
 // Setup 
@@ -184,11 +187,11 @@ void setup()
   g_DDRB = (uint8_t*) 0x24;
   g_pinB = (uint8_t*) 0x23;
   
-  *g_portB = PORTB_INIT_MASK;
+  *g_portB |= PORTB_INIT_MASK;
   *g_DDRB = DDRB_INIT_MASK;
   
   g_portD = (uint8_t*) 0x2B;
-  g_DDRB = (uint8_t*) 0x2A;
+  g_DDRD = (uint8_t*) 0x2A;
   g_pinD = (uint8_t*) 0x29;
   
   *g_portD = PORTD_INIT_MASK;
@@ -234,6 +237,7 @@ void setup()
   g_timeStamps[2] = 0;
   g_timeStamps[3] = 0;
   g_timeStamps[4] = 0;
+  g_timeStamps[5] = 0;
 
   // global logic variable init
   g_lowerProxState = *g_pinB | PROX_LOWER_MASK;
@@ -247,19 +251,19 @@ void setup()
   g_swManState = *g_pinD & SW_MANUAL_MASK;
   g_swManLastState = g_swManState;
   
-  if (!(g_swManState))
+  if (!(g_swManLastState))
     g_state = STATE_MANUAL;
-  else if (!(g_swAutoState))
+  else if (!(g_swAutoLastState))
     g_state = STATE_AUTO;
   else
     g_state = STATE_OFF;
     
   // Selector switch shows both auto and manual then error
-  if (!(g_swAutoState) && !(g_swManState))
+  if (!(g_swAutoLastState) && !(g_swManLastState))
     g_state = -1;
     
   g_switchState = 1;
-  
+ 
 }
 
 
@@ -271,7 +275,7 @@ void loop()
 
   if(g_switchState)
   {
-    *g_portB &= !ERROR_LED_MASK;
+    *g_portB &= ~ERROR_LED_MASK;
     switch (g_state)
     {
       case STATE_AUTO:
@@ -311,7 +315,7 @@ int8_t checkSwitch()
   uint32_t curTime;
   uint32_t delta;
   
-  if(!(*g_pcmsk2 | SW_AUTO_PCINT))
+  if(!(*g_pcmsk2 & SW_AUTO_PCINT))
   {
     curTime = millis();
     if (curTime >= g_timeStamps[2])
@@ -324,7 +328,7 @@ int8_t checkSwitch()
     }
     if (delta >= DEBOUNCE_MSEC)
     {
-      g_swAutoState = *g_pinD | SW_AUTO_MASK;
+      g_swAutoState = *g_pinD & SW_AUTO_MASK;
       if(g_swAutoState != g_swAutoLastState)
       {
         g_swAutoLastState = g_swAutoState;
@@ -334,7 +338,7 @@ int8_t checkSwitch()
     }    
   }
   
-  if(!(*g_pcmsk2 | SW_MANUAL_PCINT))
+  if(!(*g_pcmsk2 & SW_MANUAL_PCINT))
   {
     curTime = millis();
     if (curTime >= g_timeStamps[3])
@@ -347,8 +351,8 @@ int8_t checkSwitch()
     }
     if (delta >= DEBOUNCE_MSEC)
     {
-      g_swManState = *g_pinD | SW_MANUAL_MASK;
-      if(g_swManState != g_swAutoLastState)
+      g_swManState = *g_pinD & SW_MANUAL_MASK;
+      if(g_swManState != g_swManLastState)
       {
         g_swManLastState = g_swManState;
         g_switchState = 1;
@@ -357,11 +361,12 @@ int8_t checkSwitch()
     }
   }
   
+
   if(g_switchState)
   {
-    if (!(g_swManState))
+    if (!(g_swManLastState))
       g_state = STATE_MANUAL;
-    else if (!(g_swAutoState))
+    else if (!(g_swAutoLastState))
       g_state = STATE_AUTO;
     else
       g_state = STATE_OFF;
@@ -377,11 +382,9 @@ int8_t handleAuto()
 {
   uint32_t curTime;
   uint32_t delta;
-  int8_t pcintFire;
   
-  pcintFire = 0;
   
-  if(!(*g_pcmsk0 | PROX_UPPER_PCINT))//pinFireUpper
+  if(!(*g_pcmsk0 & PROX_UPPER_PCINT))//pinFireUpper
   {
     curTime = millis();
     if (curTime >= g_timeStamps[0])
@@ -394,16 +397,17 @@ int8_t handleAuto()
     }
     if(delta >= DEBOUNCE_MSEC)
     {
-      g_upperProxState = *g_pinB | PROX_UPPER_MASK;
+      g_upperProxState = *g_pinB & PROX_UPPER_MASK;
       if(g_upperProxState != g_upperProxLastState)
       {
         g_upperProxLastState = g_upperProxState;
-        g_timeStamps[4] = millis();
+        g_timeStamps[4] = curTime;
       }
       *g_pcmsk0 |= PROX_UPPER_PCINT;
     }
   }
-  if(!(*g_pcmsk0 | PROX_LOWER_PCINT))//pinFireLower
+  
+  if(!(*g_pcmsk0 & PROX_LOWER_PCINT))//pinFireLower
   {
     curTime = millis();
     if (curTime >= g_timeStamps[1])
@@ -416,11 +420,11 @@ int8_t handleAuto()
     }
     if (delta >= DEBOUNCE_MSEC)
     {
-      g_lowerProxState = *g_pinB | PROX_LOWER_MASK;
+      g_lowerProxState = *g_pinB & PROX_LOWER_MASK;
       if(g_lowerProxState != g_lowerProxLastState)
       {
         g_lowerProxLastState = g_lowerProxState;
-        g_timeStamps[5] = millis();
+        g_timeStamps[5] = curTime;
       }
       *g_pcmsk0 |= PROX_LOWER_PCINT;
     }
@@ -428,50 +432,38 @@ int8_t handleAuto()
   
   
   curTime = millis();
- 
-
   // Upper prox sensor covered for two seconds: stop motor
   if(!g_upperProxLastState)
   {
-    if(curTime >= g_timeStamps[0])
+    if(curTime >= g_timeStamps[4])
     {
-      delta = curTime - g_timeStamps[0];
+      delta = curTime - g_timeStamps[4];
     }
     else
     {
-      delta = 0xFFFFFFFF - g_timeStamps[0] + curTime;
+      delta = 0xFFFFFFFF - g_timeStamps[4] + curTime;
     }
-    if(delta >= PROX_DELAY)    
+    if(delta >= PROX_DELAY)
+    {
       *g_portD &= ~MOTOR_MASK;
+    }
   }
-  else if(g_lowerProxLastState);
+  else if(g_lowerProxLastState)
   {
     if(curTime >= g_timeStamps[5])
     {
-      delta = curTime - g_timeStamps[1];
+      delta = curTime - g_timeStamps[5];
     }
     else
     {
-      delta = 0xFFFFFFFF - g_timeStamps[1] + curTime;
+      delta = 0xFFFFFFFF - g_timeStamps[5] + curTime;
     }
     if (delta >= PROX_DELAY)
-      *g_portD |= MOTOR_MASK;
-  }
-  if(g_lowerProxLastState)
-  {
-    if(curTime >= g_timeStamps[1])
-    {
-      delta = curTime - g_timeStamps[1];
-    }
-    else
-    {
-      delta = 0xFFFFFFFF - g_timeStamps[1] + curTime;
-    }
-    
-    // six seconds have passed without a cap: error
-    if(delta >= PROX_DELAY_3X)
     {
       *g_portD |= MOTOR_MASK;
+    }
+    if (delta >= PROX_DELAY_3X)
+    {
       *g_portB |= ERROR_LED_MASK;
     }
   }
@@ -489,6 +481,7 @@ void inline switchToManual()
 {
   *g_portD |= MOTOR_MASK;
   *g_portB |= MOTOR_LED_MASK;
+  
 }
 
 void inline switchToOff()
@@ -524,7 +517,7 @@ ISR(TIMER1_OVF_vect)
 //
 ISR(PCINT0_vect)
 {
-  if((*g_pinB | PROX_UPPER_MASK) != g_upperProxLastState)
+  if((*g_pinB & PROX_UPPER_MASK) != g_upperProxLastState)
   {
     *g_pcmsk0 &= ~PROX_UPPER_PCINT;
     g_timeStamps[0] = millis();
@@ -545,7 +538,7 @@ ISR(PCINT1_vect)
 
 ISR(PCINT2_vect)
 {
-  if((*g_pinD | SW_MANUAL_MASK) != g_swManLastState)
+  if((*g_pinD & SW_MANUAL_MASK) != g_swManLastState)
   {
     *g_pcmsk2 &= ~SW_MANUAL_PCINT;
     g_timeStamps[3] = millis();
